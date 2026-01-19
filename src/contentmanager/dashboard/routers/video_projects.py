@@ -756,15 +756,21 @@ async def render_video_task(project_id: int, background_id: int | None = None):
 
             if questioner:
                 q_assets = asset_manager.get_character_assets(questioner.id)
-                if q_assets:
-                    # Use first available pose for questioner
-                    character_assets["questioner"] = Path(q_assets[0]["file_path"])
+                # Build dict of poses: {pose_name: path}
+                q_poses = {}
+                for asset in q_assets:
+                    q_poses[asset["pose"]] = Path(asset["file_path"])
+                if q_poses:
+                    character_assets["questioner"] = q_poses
 
             if explainer:
                 e_assets = asset_manager.get_character_assets(explainer.id)
-                if e_assets:
-                    # Use first available pose for explainer
-                    character_assets["explainer"] = Path(e_assets[0]["file_path"])
+                # Build dict of poses: {pose_name: path}
+                e_poses = {}
+                for asset in e_assets:
+                    e_poses[asset["pose"]] = Path(asset["file_path"])
+                if e_poses:
+                    character_assets["explainer"] = e_poses
 
             # Get music if specified
             music_path = None
