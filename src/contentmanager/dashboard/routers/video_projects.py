@@ -475,16 +475,21 @@ async def get_project(
     return VideoProjectResponse.model_validate(project)
 
 
+class UpdateScriptRequest(BaseModel):
+    """Request model for updating project script."""
+    script_json: dict
+    takeaway: str
+
+
 @router.patch("/projects/{project_id}")
 async def update_project_script(
     project_id: int,
-    script_json: dict,
-    takeaway: str,
+    request: UpdateScriptRequest,
     db: Session = Depends(get_db),
 ):
     """Update project script content."""
     repo = VideoProjectRepository(db)
-    project = repo.update_script(project_id, script_json, takeaway)
+    project = repo.update_script(project_id, request.script_json, request.takeaway)
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")

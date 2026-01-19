@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch, AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from contentmanager.dashboard.routers.video_projects import router
+from contentmanager.dashboard.routers.video_projects import router, get_db
 from contentmanager.database.repositories.video_project import (
     VideoProjectRepository,
     CharacterRepository,
@@ -24,20 +24,20 @@ app = FastAPI()
 app.include_router(router)
 
 
-# Override the database dependency with test session
-def override_get_db(db_session):
-    """Create a dependency override function."""
-    def _get_db():
-        return db_session
-    return _get_db
-
-
 @pytest.fixture
-def client(db_session):
-    """Create a test client with database session override."""
-    from contentmanager.dashboard.routers.video_projects import get_db
+def client(db_session_factory):
+    """Create a test client with database session override.
 
-    app.dependency_overrides[get_db] = override_get_db(db_session)
+    Uses db_session_factory to create sessions that work across threads.
+    """
+    def override_get_db():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
 
     with TestClient(app) as test_client:
         yield test_client
@@ -46,14 +46,25 @@ def client(db_session):
 
 
 @pytest.fixture
-def sample_characters(db_session):
-    """Create sample characters for testing."""
-    char_repo = CharacterRepository(db_session)
+def sample_characters(db_session_factory):
+    """Create sample characters for testing.
 
-    questioner = char_repo.create(name="Thabo", role=CharacterRole.QUESTIONER.value)
-    explainer = char_repo.create(name="Lerato", role=CharacterRole.EXPLAINER.value)
+    Returns a dict with character IDs to avoid detached instance errors.
+    """
+    session = db_session_factory()
+    try:
+        char_repo = CharacterRepository(session)
 
-    return {"questioner": questioner, "explainer": explainer}
+        questioner = char_repo.create(name="Thabo", role=CharacterRole.QUESTIONER)
+        explainer = char_repo.create(name="Lerato", role=CharacterRole.EXPLAINER)
+
+        # Return IDs to avoid detached instance errors
+        return {
+            "questioner_id": questioner.id,
+            "explainer_id": explainer.id,
+        }
+    finally:
+        session.close()
 
 
 class TestCharacterEndpoints:
@@ -116,7 +127,7 @@ class TestCharacterEndpoints:
         mock_path.stat.return_value.st_size = 1024
         mock_asset_manager.save_character_asset = AsyncMock(return_value=mock_path)
 
-        character_id = sample_characters["questioner"].id
+        character_id = sample_characters["questioner_id"]
 
         # Create a fake file
         file_data = BytesIO(b"fake image data")
@@ -148,20 +159,22 @@ class TestCharacterEndpoints:
         assert "Character not found" in response.json()["detail"]
 
     @patch("contentmanager.dashboard.routers.video_projects.asset_manager")
-    def test_delete_character_asset(self, mock_asset_manager, client, db_session, sample_characters):
+    def test_delete_character_asset(self, mock_asset_manager, client, db_session_factory, sample_characters):
         """Test DELETE /characters/{id}/assets/{asset_id} endpoint."""
         mock_asset_manager.delete_asset = AsyncMock(return_value=True)
 
-        char_repo = CharacterRepository(db_session)
-        character = sample_characters["questioner"]
+        session = db_session_factory()
+        char_repo = CharacterRepository(session)
+        character_id = sample_characters["questioner_id"]
 
         # Add an asset first
         asset = char_repo.add_asset(
-            character.id, "standing", "/tmp/standing.png", 1024
+            character_id, "standing", "/tmp/standing.png", 1024
         )
+        session.close()
 
         response = client.delete(
-            f"/api/video/characters/{character.id}/assets/{asset.id}"
+            f"/api/video/characters/{character_id}/assets/{asset.id}"
         )
 
         assert response.status_code == 200
@@ -169,10 +182,10 @@ class TestCharacterEndpoints:
 
     def test_delete_character_asset_not_found(self, client, sample_characters):
         """Test deleting non-existent asset."""
-        character = sample_characters["questioner"]
+        character_id = sample_characters["questioner_id"]
 
         response = client.delete(
-            f"/api/video/characters/{character.id}/assets/9999"
+            f"/api/video/characters/{character_id}/assets/9999"
         )
 
         assert response.status_code == 404
@@ -208,11 +221,13 @@ class TestBackgroundEndpoints:
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_list_backgrounds(self, client, db_session):
+    def test_list_backgrounds(self, client, db_session_factory):
         """Test GET /backgrounds returns backgrounds."""
-        asset_repo = AssetRepository(db_session)
+        session = db_session_factory()
+        asset_repo = AssetRepository(session)
         asset_repo.create_background("BG1", "/tmp/bg1.jpg", ContextStyle.TECH.value)
         asset_repo.create_background("BG2", "/tmp/bg2.jpg", ContextStyle.FINANCE.value)
+        session.close()
 
         response = client.get("/api/video/backgrounds")
 
@@ -220,11 +235,13 @@ class TestBackgroundEndpoints:
         data = response.json()
         assert len(data) == 2
 
-    def test_list_backgrounds_filter_by_style(self, client, db_session):
+    def test_list_backgrounds_filter_by_style(self, client, db_session_factory):
         """Test filtering backgrounds by context_style."""
-        asset_repo = AssetRepository(db_session)
+        session = db_session_factory()
+        asset_repo = AssetRepository(session)
         asset_repo.create_background("Tech BG", "/tmp/tech.jpg", ContextStyle.TECH.value)
         asset_repo.create_background("Finance BG", "/tmp/fin.jpg", ContextStyle.FINANCE.value)
+        session.close()
 
         response = client.get(
             "/api/video/backgrounds",
@@ -237,12 +254,14 @@ class TestBackgroundEndpoints:
         assert data[0]["name"] == "Tech BG"
 
     @patch("contentmanager.dashboard.routers.video_projects.asset_manager")
-    def test_delete_background(self, mock_asset_manager, client, db_session):
+    def test_delete_background(self, mock_asset_manager, client, db_session_factory):
         """Test DELETE /backgrounds/{id} endpoint."""
         mock_asset_manager.delete_asset = AsyncMock(return_value=True)
 
-        asset_repo = AssetRepository(db_session)
+        session = db_session_factory()
+        asset_repo = AssetRepository(session)
         bg = asset_repo.create_background("Test BG", "/tmp/bg.jpg")
+        session.close()
 
         response = client.delete(f"/api/video/backgrounds/{bg.id}")
 
@@ -282,11 +301,13 @@ class TestMusicEndpoints:
         assert data["name"] == "Upbeat Track"
         assert data["duration_seconds"] == 120.5
 
-    def test_list_music(self, client, db_session):
+    def test_list_music(self, client, db_session_factory):
         """Test GET /music endpoint."""
-        asset_repo = AssetRepository(db_session)
+        session = db_session_factory()
+        asset_repo = AssetRepository(session)
         asset_repo.create_music("Track1", "/tmp/t1.mp3", 60.0)
         asset_repo.create_music("Track2", "/tmp/t2.mp3", 90.0)
+        session.close()
 
         response = client.get("/api/video/music")
 
@@ -295,12 +316,14 @@ class TestMusicEndpoints:
         assert len(data) == 2
 
     @patch("contentmanager.dashboard.routers.video_projects.asset_manager")
-    def test_delete_music(self, mock_asset_manager, client, db_session):
+    def test_delete_music(self, mock_asset_manager, client, db_session_factory):
         """Test DELETE /music/{id} endpoint."""
         mock_asset_manager.delete_asset = AsyncMock(return_value=True)
 
-        asset_repo = AssetRepository(db_session)
+        session = db_session_factory()
+        asset_repo = AssetRepository(session)
         music = asset_repo.create_music("Test", "/tmp/music.mp3", 45.0)
+        session.close()
 
         response = client.delete(f"/api/video/music/{music.id}")
 
@@ -322,8 +345,8 @@ class TestVideoProjectEndpoints:
             "title": "My First Video",
             "topic": "Introduction to Python",
             "context_style": "tech",
-            "questioner_id": sample_characters["questioner"].id,
-            "explainer_id": sample_characters["explainer"].id,
+            "questioner_id": sample_characters["questioner_id"],
+            "explainer_id": sample_characters["explainer_id"],
         }
 
         response = client.post(
@@ -344,7 +367,7 @@ class TestVideoProjectEndpoints:
             "topic": "Test",
             "context_style": "tech",
             "questioner_id": 9999,  # Non-existent
-            "explainer_id": sample_characters["explainer"].id,
+            "explainer_id": sample_characters["explainer_id"],
         }
 
         response = client.post("/api/video/projects", json=project_data)
@@ -359,20 +382,22 @@ class TestVideoProjectEndpoints:
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_list_projects(self, client, db_session, sample_characters):
+    def test_list_projects(self, client, db_session_factory, sample_characters):
         """Test GET /projects returns projects."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         repo.create(
             "Project 1", "Topic 1", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
         repo.create(
             "Project 2", "Topic 2", ContextStyle.FINANCE.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.get("/api/video/projects")
 
@@ -380,21 +405,23 @@ class TestVideoProjectEndpoints:
         data = response.json()
         assert len(data) == 2
 
-    def test_list_projects_filter_by_status(self, client, db_session, sample_characters):
+    def test_list_projects_filter_by_status(self, client, db_session_factory, sample_characters):
         """Test filtering projects by status."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         p1 = repo.create(
             "Draft", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
         p2 = repo.create(
             "Approved", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
         repo.update_status(p2.id, VideoProjectStatus.APPROVED)
+        session.close()
 
         response = client.get(
             "/api/video/projects",
@@ -406,15 +433,17 @@ class TestVideoProjectEndpoints:
         assert len(data) == 1
         assert data[0]["id"] == p2.id
 
-    def test_get_project(self, client, db_session, sample_characters):
+    def test_get_project(self, client, db_session_factory, sample_characters):
         """Test GET /projects/{id} endpoint."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test Project", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.get(f"/api/video/projects/{project.id}")
 
@@ -429,39 +458,45 @@ class TestVideoProjectEndpoints:
 
         assert response.status_code == 404
 
-    def test_update_project_script(self, client, db_session, sample_characters):
+    def test_update_project_script(self, client, db_session_factory, sample_characters):
         """Test PATCH /projects/{id} endpoint."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        project_id = project.id
+        session.close()
 
-        update_data = {
-            "script_json": {"lines": [{"text": "Hello"}]},
-            "takeaway": "Great lesson!",
-        }
-
+        # The endpoint expects script_json and takeaway as query params
+        # but script_json is a dict which can't be passed as a simple query param
+        # So we need to check how the API actually expects the data
         response = client.patch(
-            f"/api/video/projects/{project.id}",
-            params=update_data,
+            f"/api/video/projects/{project_id}",
+            json={
+                "script_json": {"lines": [{"text": "Hello"}]},
+                "takeaway": "Great lesson!",
+            },
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["takeaway"] == "Great lesson!"
 
-    def test_delete_project(self, client, db_session, sample_characters):
+    def test_delete_project(self, client, db_session_factory, sample_characters):
         """Test DELETE /projects/{id} endpoint."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.delete(f"/api/video/projects/{project.id}")
 
@@ -479,19 +514,21 @@ class TestWorkflowActionEndpoints:
     """Test workflow action endpoints (approve, reject, regenerate)."""
 
     @patch("contentmanager.dashboard.routers.video_projects.get_voiceover_service")
-    def test_approve_project(self, mock_get_service, client, db_session, sample_characters):
+    def test_approve_project(self, mock_get_service, client, db_session_factory, sample_characters):
         """Test POST /projects/{id}/approve endpoint."""
         # Mock voiceover service to avoid API calls
         mock_service = Mock()
         mock_get_service.return_value = mock_service
 
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.post(
             f"/api/video/projects/{project.id}/approve",
@@ -502,31 +539,35 @@ class TestWorkflowActionEndpoints:
         data = response.json()
         assert data["status"] == "approved"
 
-    def test_approve_project_not_in_draft(self, client, db_session, sample_characters):
+    def test_approve_project_not_in_draft(self, client, db_session_factory, sample_characters):
         """Test approving non-draft project fails."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
         repo.update_status(project.id, VideoProjectStatus.COMPLETED)
+        session.close()
 
         response = client.post(f"/api/video/projects/{project.id}/approve")
 
         assert response.status_code == 400
         assert "not in DRAFT status" in response.json()["detail"]
 
-    def test_reject_project(self, client, db_session, sample_characters):
+    def test_reject_project(self, client, db_session_factory, sample_characters):
         """Test POST /projects/{id}/reject endpoint."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.post(
             f"/api/video/projects/{project.id}/reject",
@@ -539,50 +580,56 @@ class TestWorkflowActionEndpoints:
         assert "Script needs improvement" in data["error_message"]
 
     @patch("contentmanager.dashboard.routers.video_projects.get_script_generator")
-    def test_regenerate_script(self, mock_get_generator, client, db_session, sample_characters):
+    def test_regenerate_script(self, mock_get_generator, client, db_session_factory, sample_characters):
         """Test POST /projects/{id}/regenerate endpoint."""
         mock_generator = Mock()
         mock_get_generator.return_value = mock_generator
 
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.post(f"/api/video/projects/{project.id}/regenerate")
 
         assert response.status_code == 200
 
     @patch("contentmanager.dashboard.routers.video_projects.ffmpeg_renderer")
-    def test_render_project(self, mock_renderer, client, db_session, sample_characters):
+    def test_render_project(self, mock_renderer, client, db_session_factory, sample_characters):
         """Test POST /projects/{id}/render endpoint."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
 
         # Set status to AUDIO_READY
         repo.update_status(project.id, VideoProjectStatus.AUDIO_READY)
+        session.close()
 
         response = client.post(f"/api/video/projects/{project.id}/render")
 
         assert response.status_code == 200
 
-    def test_render_project_wrong_status(self, client, db_session, sample_characters):
+    def test_render_project_wrong_status(self, client, db_session_factory, sample_characters):
         """Test rendering project not in AUDIO_READY status."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.post(f"/api/video/projects/{project.id}/render")
 
@@ -593,30 +640,34 @@ class TestWorkflowActionEndpoints:
 class TestDownloadEndpoints:
     """Test download and preview endpoints."""
 
-    def test_download_video_not_ready(self, client, db_session, sample_characters):
+    def test_download_video_not_ready(self, client, db_session_factory, sample_characters):
         """Test downloading video that hasn't been rendered."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.get(f"/api/video/projects/{project.id}/download")
 
         assert response.status_code == 404
         assert "not yet rendered" in response.json()["detail"]
 
-    def test_preview_audio_not_ready(self, client, db_session, sample_characters):
+    def test_preview_audio_not_ready(self, client, db_session_factory, sample_characters):
         """Test previewing audio that hasn't been generated."""
-        repo = VideoProjectRepository(db_session)
+        session = db_session_factory()
+        repo = VideoProjectRepository(session)
 
         project = repo.create(
             "Test", "Topic", ContextStyle.TECH.value,
-            sample_characters["questioner"].id,
-            sample_characters["explainer"].id,
+            sample_characters["questioner_id"],
+            sample_characters["explainer_id"],
         )
+        session.close()
 
         response = client.get(f"/api/video/projects/{project.id}/preview-audio")
 
