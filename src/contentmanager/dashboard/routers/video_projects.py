@@ -23,7 +23,7 @@ from ...core.content.video_pipeline.models import (
 from ...core.content.video_pipeline.asset_manager import AssetManager
 from ...core.content.video_pipeline.script_generator import DialogueScriptGenerator
 from ...core.content.video_pipeline.voiceover_service import VoiceoverService
-from ...core.content.video_pipeline.ffmpeg_renderer import FFmpegRenderer
+from ...core.content.video_pipeline.animated_renderer import AnimatedRenderer
 from ...core.content.video_pipeline.pipeline import VideoPipeline
 from ...database.repositories.video_project import (
     VideoProjectRepository,
@@ -78,8 +78,8 @@ def get_voiceover_service() -> VoiceoverService:
         )
     return _voiceover_service
 
-# FFmpeg Renderer
-ffmpeg_renderer = FFmpegRenderer(
+# Animated Renderer
+animated_renderer = AnimatedRenderer(
     ffmpeg_path=settings.video.ffmpeg_path,
     ffprobe_path=settings.video.ffprobe_path,
     width=settings.video.width,
@@ -92,7 +92,7 @@ def get_pipeline() -> VideoPipeline:
     return VideoPipeline(
         script_generator=get_script_generator(),
         voiceover_service=get_voiceover_service(),
-        renderer=ffmpeg_renderer,
+        renderer=animated_renderer,
         asset_manager=asset_manager,
         projects_dir=settings.video.projects_dir,
     )
@@ -784,7 +784,7 @@ async def render_video_task(project_id: int, background_id: int | None = None):
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = output_dir / f"project_{project_id}.mp4"
 
-            result = await ffmpeg_renderer.render_video(
+            result = await animated_renderer.render_video(
                 script=script,
                 voiceover_path=Path(project.voiceover_path),
                 background_path=background_path,
