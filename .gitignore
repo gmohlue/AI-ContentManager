@@ -38,9 +38,10 @@ env/
 .env.*.local
 
 # Data directories
-data/assets/
-data/projects/
-data/videos/
+data/
+
+# Playwright
+.playwright-mcp/
 
 # Logs
 *.log
