@@ -748,7 +748,7 @@ async def render_video_task(project_id: int, background_id: int | None = None):
             if not background_path or not background_path.exists():
                 raise ValueError("No background image available")
 
-            # Get character assets
+            # Get character assets (use first available pose for each role)
             questioner = char_repo.get_by_id(project.questioner_id)
             explainer = char_repo.get_by_id(project.explainer_id)
 
@@ -756,13 +756,15 @@ async def render_video_task(project_id: int, background_id: int | None = None):
 
             if questioner:
                 q_assets = asset_manager.get_character_assets(questioner.id)
-                for asset in q_assets:
-                    character_assets[f"questioner_{asset['pose']}"] = Path(asset["file_path"])
+                if q_assets:
+                    # Use first available pose for questioner
+                    character_assets["questioner"] = Path(q_assets[0]["file_path"])
 
             if explainer:
                 e_assets = asset_manager.get_character_assets(explainer.id)
-                for asset in e_assets:
-                    character_assets[f"explainer_{asset['pose']}"] = Path(asset["file_path"])
+                if e_assets:
+                    # Use first available pose for explainer
+                    character_assets["explainer"] = Path(e_assets[0]["file_path"])
 
             # Get music if specified
             music_path = None
