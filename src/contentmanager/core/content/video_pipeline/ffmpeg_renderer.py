@@ -16,11 +16,13 @@ class FFmpegRenderer:
     def __init__(
         self,
         ffmpeg_path: str = "ffmpeg",
+        ffprobe_path: str = "ffprobe",
         width: int = 1080,
         height: int = 1920,
         fps: int = 30,
     ):
         self.ffmpeg_path = ffmpeg_path
+        self.ffprobe_path = ffprobe_path
         self.width = width
         self.height = height
         self.fps = fps
@@ -202,7 +204,7 @@ class FFmpegRenderer:
         """Get duration of video file using ffprobe."""
         result = subprocess.run(
             [
-                "ffprobe",
+                self.ffprobe_path,
                 "-v",
                 "error",
                 "-show_entries",

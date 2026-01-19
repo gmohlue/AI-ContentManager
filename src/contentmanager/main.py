@@ -6,12 +6,18 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from .config import settings
 from .database.models import Base
 from .dashboard.routers import video_projects
+
+# Dashboard paths
+DASHBOARD_DIR = Path(__file__).parent / "dashboard"
+TEMPLATES_DIR = DASHBOARD_DIR / "templates"
+STATIC_DIR = DASHBOARD_DIR / "static"
 
 # Configure logging
 logging.basicConfig(
@@ -70,16 +76,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Override the dependency in the router
-video_projects.get_db = get_db
-
 # Include routers
 app.include_router(video_projects.router)
 
+# Override the database dependency
+app.dependency_overrides[video_projects.get_db] = get_db
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
+# Mount static files
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the dashboard UI."""
+    template_path = TEMPLATES_DIR / "index.html"
+    if template_path.exists():
+        return HTMLResponse(content=template_path.read_text(), status_code=200)
+    return HTMLResponse(
+        content="<h1>Dashboard not found</h1><p>Templates not configured.</p>",
+        status_code=404
+    )
+
+
+@app.get("/api")
+async def api_info():
+    """API info endpoint."""
     return {
         "name": settings.app_name,
         "version": "0.1.0",

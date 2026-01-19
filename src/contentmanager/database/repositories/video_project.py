@@ -150,12 +150,20 @@ class VideoProjectRepository:
             return None
 
         project.voiceover_path = voiceover_path
-        project.status = VideoProjectStatus.AUDIO_READY
         project.updated_at = datetime.utcnow()
 
         self.session.commit()
         self.session.refresh(project)
         return project
+
+    # Alias for consistency
+    def update_voiceover(
+        self,
+        project_id: int,
+        voiceover_path: str,
+    ) -> VideoProject | None:
+        """Update voiceover path (alias for set_voiceover_path)."""
+        return self.set_voiceover_path(project_id, voiceover_path)
 
     def set_output(
         self,
@@ -170,12 +178,21 @@ class VideoProjectRepository:
 
         project.output_path = output_path
         project.duration_seconds = duration_seconds
-        project.status = VideoProjectStatus.COMPLETED
         project.updated_at = datetime.utcnow()
 
         self.session.commit()
         self.session.refresh(project)
         return project
+
+    # Alias for consistency
+    def update_output(
+        self,
+        project_id: int,
+        output_path: str,
+        duration_seconds: float,
+    ) -> VideoProject | None:
+        """Update output path and duration (alias for set_output)."""
+        return self.set_output(project_id, output_path, duration_seconds)
 
     def delete(self, project_id: int) -> bool:
         """Delete a video project."""
@@ -297,6 +314,10 @@ class CharacterRepository:
         self.session.refresh(asset)
         return asset
 
+    def get_asset_by_id(self, asset_id: int) -> CharacterAsset | None:
+        """Get a character asset by ID."""
+        return self.session.get(CharacterAsset, asset_id)
+
     def delete_asset(self, asset_id: int) -> bool:
         """Delete a character asset."""
         asset = self.session.get(CharacterAsset, asset_id)
@@ -385,6 +406,14 @@ class AssetRepository:
             stmt = stmt.where(MusicAsset.tenant_id == tenant_id)
 
         return list(self.session.execute(stmt).scalars().all())
+
+    def get_background_by_id(self, asset_id: int) -> BackgroundAsset | None:
+        """Get a background asset by ID."""
+        return self.session.get(BackgroundAsset, asset_id)
+
+    def get_music_by_id(self, asset_id: int) -> MusicAsset | None:
+        """Get a music asset by ID."""
+        return self.session.get(MusicAsset, asset_id)
 
     def delete_background(self, asset_id: int) -> bool:
         """Delete a background asset."""

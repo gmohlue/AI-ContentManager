@@ -1,31 +1,126 @@
 """FastAPI router for video project endpoints."""
 
+import logging
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, BackgroundTasks
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ...config import settings
 from ...core.content.video_pipeline.models import (
     ContextStyle,
+    DialogueScript,
+    DialogueLine,
+    CharacterRole,
     VideoProjectCreate,
     VideoProjectResponse,
     VideoProjectStatus,
 )
+from ...core.content.video_pipeline.asset_manager import AssetManager
+from ...core.content.video_pipeline.script_generator import DialogueScriptGenerator
+from ...core.content.video_pipeline.voiceover_service import VoiceoverService
+from ...core.content.video_pipeline.ffmpeg_renderer import FFmpegRenderer
+from ...core.content.video_pipeline.pipeline import VideoPipeline
 from ...database.repositories.video_project import (
     VideoProjectRepository,
     CharacterRepository,
     AssetRepository,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/video", tags=["video"])
+
+
+# =============================================================================
+# Service Initialization
+# =============================================================================
+
+# Asset Manager
+asset_manager = AssetManager(settings.video.assets_dir)
+
+# Script Generator (lazy init - requires API key)
+_script_generator: DialogueScriptGenerator | None = None
+
+def get_script_generator() -> DialogueScriptGenerator:
+    global _script_generator
+    if _script_generator is None:
+        if not settings.claude.api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Claude API key not configured. Set CLAUDE_API_KEY environment variable."
+            )
+        _script_generator = DialogueScriptGenerator(
+            api_key=settings.claude.api_key,
+            model=settings.claude.model,
+        )
+    return _script_generator
+
+# Voiceover Service (lazy init - requires API key)
+_voiceover_service: VoiceoverService | None = None
+
+def get_voiceover_service() -> VoiceoverService:
+    global _voiceover_service
+    if _voiceover_service is None:
+        if not settings.video.elevenlabs_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Eleven Labs API key not configured. Set VIDEO_ELEVENLABS_API_KEY environment variable."
+            )
+        _voiceover_service = VoiceoverService(
+            api_key=settings.video.elevenlabs_api_key,
+            questioner_voice_id=settings.video.elevenlabs_questioner_voice,
+            explainer_voice_id=settings.video.elevenlabs_explainer_voice,
+        )
+    return _voiceover_service
+
+# FFmpeg Renderer
+ffmpeg_renderer = FFmpegRenderer(
+    ffmpeg_path=settings.video.ffmpeg_path,
+    ffprobe_path=settings.video.ffprobe_path,
+    width=settings.video.width,
+    height=settings.video.height,
+    fps=settings.video.fps,
+)
+
+def get_pipeline() -> VideoPipeline:
+    """Get configured video pipeline."""
+    return VideoPipeline(
+        script_generator=get_script_generator(),
+        voiceover_service=get_voiceover_service(),
+        renderer=ffmpeg_renderer,
+        asset_manager=asset_manager,
+        projects_dir=settings.video.projects_dir,
+    )
 
 
 # Dependency placeholder - replace with actual database session dependency
 def get_db() -> Session:
     """Get database session dependency."""
     raise NotImplementedError("Database session dependency not configured")
+
+
+def get_audio_duration(file_path: Path) -> float:
+    """Get duration of audio file using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                settings.video.ffprobe_path,
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return float(result.stdout.strip())
+    except (ValueError, subprocess.CalledProcessError):
+        return 0.0
 
 
 # =============================================================================
@@ -36,13 +131,13 @@ def get_db() -> Session:
 @router.post("/characters")
 async def create_character(
     name: str,
-    role: str,
+    role: CharacterRole,
     db: Session = Depends(get_db),
 ):
     """Create a new character."""
     repo = CharacterRepository(db)
     character = repo.create(name=name, role=role)
-    return {"id": character.id, "name": character.name, "role": character.role}
+    return {"id": character.id, "name": character.name, "role": character.role.value}
 
 
 @router.get("/characters")
@@ -51,7 +146,7 @@ async def list_characters(db: Session = Depends(get_db)):
     repo = CharacterRepository(db)
     characters = repo.list_characters()
     return [
-        {"id": c.id, "name": c.name, "role": c.role, "is_active": c.is_active}
+        {"id": c.id, "name": c.name, "role": c.role.value, "is_active": c.is_active}
         for c in characters
     ]
 
@@ -70,14 +165,22 @@ async def upload_character_asset(
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    # TODO: Save file using AssetManager and get path
-    file_path = f"data/assets/characters/{character_id}/{pose}.png"
-    file_size = 0  # TODO: Get actual file size
+    # Save file using AssetManager
+    try:
+        file_path = await asset_manager.save_character_asset(
+            character_id=character_id,
+            pose=pose,
+            file=file.file,
+            filename=file.filename or f"{pose}.png",
+        )
+        file_size = file_path.stat().st_size
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     asset = repo.add_asset(
         character_id=character_id,
         pose=pose,
-        file_path=file_path,
+        file_path=str(file_path),
         file_size_bytes=file_size,
     )
 
@@ -92,6 +195,12 @@ async def delete_character_asset(
 ):
     """Delete a character pose asset."""
     repo = CharacterRepository(db)
+    asset = repo.get_asset_by_id(asset_id)
+
+    if asset:
+        # Delete file from disk
+        await asset_manager.delete_asset(Path(asset.file_path))
+
     deleted = repo.delete_asset(asset_id)
 
     if not deleted:
@@ -115,12 +224,20 @@ async def upload_background(
     """Upload a background image."""
     repo = AssetRepository(db)
 
-    # TODO: Save file using AssetManager and get path
-    file_path = f"data/assets/backgrounds/{name}.png"
+    # Save file using AssetManager
+    try:
+        file_path = await asset_manager.save_background_asset(
+            name=name,
+            file=file.file,
+            filename=file.filename or f"{name}.png",
+            context_style=context_style,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     asset = repo.create_background(
         name=name,
-        file_path=file_path,
+        file_path=str(file_path),
         context_style=context_style.value if context_style else None,
     )
 
@@ -150,6 +267,12 @@ async def delete_background(
 ):
     """Delete a background asset."""
     repo = AssetRepository(db)
+    background = repo.get_background_by_id(background_id)
+
+    if background:
+        # Delete file from disk
+        await asset_manager.delete_asset(Path(background.file_path))
+
     deleted = repo.delete_background(background_id)
 
     if not deleted:
@@ -173,13 +296,23 @@ async def upload_music(
     """Upload a music track."""
     repo = AssetRepository(db)
 
-    # TODO: Save file using AssetManager and get path/duration
-    file_path = f"data/assets/music/{name}.mp3"
-    duration_seconds = 0.0  # TODO: Get actual duration
+    # Save file using AssetManager
+    try:
+        file_path = await asset_manager.save_music_asset(
+            name=name,
+            file=file.file,
+            filename=file.filename or f"{name}.mp3",
+            context_style=context_style,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Get actual duration using ffprobe
+    duration_seconds = get_audio_duration(file_path)
 
     asset = repo.create_music(
         name=name,
-        file_path=file_path,
+        file_path=str(file_path),
         duration_seconds=duration_seconds,
         context_style=context_style.value if context_style else None,
     )
@@ -210,6 +343,12 @@ async def delete_music(
 ):
     """Delete a music asset."""
     repo = AssetRepository(db)
+    music = repo.get_music_by_id(music_id)
+
+    if music:
+        # Delete file from disk
+        await asset_manager.delete_asset(Path(music.file_path))
+
     deleted = repo.delete_music(music_id)
 
     if not deleted:
@@ -226,10 +365,21 @@ async def delete_music(
 @router.post("/projects", response_model=VideoProjectResponse)
 async def create_project(
     request: VideoProjectCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Create a new video project and generate script."""
     repo = VideoProjectRepository(db)
+    char_repo = CharacterRepository(db)
+
+    # Validate characters exist
+    questioner = char_repo.get_by_id(request.questioner_id)
+    explainer = char_repo.get_by_id(request.explainer_id)
+
+    if not questioner:
+        raise HTTPException(status_code=400, detail="Questioner character not found")
+    if not explainer:
+        raise HTTPException(status_code=400, detail="Explainer character not found")
 
     project = repo.create(
         title=request.title,
@@ -241,9 +391,59 @@ async def create_project(
         document_id=request.document_id,
     )
 
-    # TODO: Generate script using pipeline and update project
+    # Generate script in background
+    background_tasks.add_task(
+        generate_script_task,
+        project_id=project.id,
+        topic=request.topic,
+        context_style=request.context_style,
+        questioner_name=questioner.name,
+        explainer_name=explainer.name,
+    )
 
     return VideoProjectResponse.model_validate(project)
+
+
+async def generate_script_task(
+    project_id: int,
+    topic: str,
+    context_style: ContextStyle,
+    questioner_name: str,
+    explainer_name: str,
+):
+    """Background task to generate script."""
+    from ...main import SessionLocal
+
+    db = SessionLocal()
+    try:
+        repo = VideoProjectRepository(db)
+
+        try:
+            script_gen = get_script_generator()
+            script = await script_gen.generate(
+                topic=topic,
+                context_style=context_style,
+                questioner_name=questioner_name,
+                explainer_name=explainer_name,
+            )
+
+            # Update project with script
+            repo.update_script(
+                project_id=project_id,
+                script_json=script.model_dump(),
+                takeaway=script.takeaway,
+            )
+            logger.info(f"Script generated for project {project_id}")
+
+        except Exception as e:
+            logger.error(f"Script generation failed for project {project_id}: {e}")
+            repo.update_status(
+                project_id=project_id,
+                status=VideoProjectStatus.FAILED,
+                error_message=f"Script generation failed: {str(e)}",
+            )
+    finally:
+        db.close()
 
 
 @router.get("/projects")
@@ -315,6 +515,7 @@ async def delete_project(
 @router.post("/projects/{project_id}/approve")
 async def approve_project(
     project_id: int,
+    background_tasks: BackgroundTasks,
     reviewed_by: str = "system",
     db: Session = Depends(get_db),
 ):
@@ -328,15 +529,86 @@ async def approve_project(
             detail="Project not found or not in DRAFT status",
         )
 
-    # TODO: Trigger voiceover generation via pipeline
+    # Trigger voiceover generation in background
+    background_tasks.add_task(
+        generate_voiceover_task,
+        project_id=project_id,
+    )
 
     return VideoProjectResponse.model_validate(project)
+
+
+async def generate_voiceover_task(project_id: int):
+    """Background task to generate voiceover."""
+    from ...main import SessionLocal
+
+    db = SessionLocal()
+    try:
+        repo = VideoProjectRepository(db)
+        project = repo.get_by_id(project_id)
+
+        if not project or not project.script_json:
+            logger.error(f"Project {project_id} not found or has no script")
+            return
+
+        try:
+            # Reconstruct script from JSON
+            script_data = project.script_json
+            lines = [
+                DialogueLine(
+                    speaker_role=CharacterRole(line["speaker_role"]),
+                    speaker_name=line["speaker_name"],
+                    line=line["line"],
+                    pose=line.get("pose", "standing"),
+                    scene_number=line["scene_number"],
+                )
+                for line in script_data.get("lines", [])
+            ]
+
+            script = DialogueScript(
+                topic=script_data["topic"],
+                context_style=ContextStyle(script_data["context_style"]),
+                lines=lines,
+                takeaway=script_data.get("takeaway", ""),
+            )
+
+            voiceover_service = get_voiceover_service()
+            output_dir = settings.video.projects_dir / "voiceovers" / str(project_id)
+
+            result = await voiceover_service.generate_voiceover(
+                script=script,
+                output_dir=output_dir,
+            )
+
+            # Update project with voiceover path
+            repo.update_voiceover(
+                project_id=project_id,
+                voiceover_path=result.combined_audio_path,
+            )
+            repo.update_status(project_id, VideoProjectStatus.AUDIO_READY)
+
+            logger.info(f"Voiceover generated for project {project_id}")
+
+        except Exception as e:
+            logger.error(f"Voiceover generation failed for project {project_id}: {e}")
+            repo.update_status(
+                project_id=project_id,
+                status=VideoProjectStatus.FAILED,
+                error_message=f"Voiceover generation failed: {str(e)}",
+            )
+    finally:
+        db.close()
+
+
+class RejectRequest(BaseModel):
+    """Request model for rejecting a project."""
+    notes: str
 
 
 @router.post("/projects/{project_id}/reject")
 async def reject_project(
     project_id: int,
-    notes: str,
+    request: RejectRequest,
     db: Session = Depends(get_db),
 ):
     """Reject a project script and return to draft."""
@@ -344,7 +616,7 @@ async def reject_project(
     project = repo.update_status(
         project_id,
         VideoProjectStatus.DRAFT,
-        error_message=f"Rejected: {notes}",
+        error_message=f"Rejected: {request.notes}",
     )
 
     if not project:
@@ -356,16 +628,36 @@ async def reject_project(
 @router.post("/projects/{project_id}/regenerate")
 async def regenerate_script(
     project_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Regenerate the script for a project."""
     repo = VideoProjectRepository(db)
+    char_repo = CharacterRepository(db)
     project = repo.get_by_id(project_id)
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # TODO: Regenerate script using pipeline
+    # Get character names
+    questioner = char_repo.get_by_id(project.questioner_id)
+    explainer = char_repo.get_by_id(project.explainer_id)
+
+    questioner_name = questioner.name if questioner else "Thabo"
+    explainer_name = explainer.name if explainer else "Lerato"
+
+    # Reset status to draft
+    repo.update_status(project_id, VideoProjectStatus.DRAFT)
+
+    # Regenerate script in background
+    background_tasks.add_task(
+        generate_script_task,
+        project_id=project_id,
+        topic=project.topic,
+        context_style=ContextStyle(project.context_style),
+        questioner_name=questioner_name,
+        explainer_name=explainer_name,
+    )
 
     return VideoProjectResponse.model_validate(project)
 
@@ -373,6 +665,8 @@ async def regenerate_script(
 @router.post("/projects/{project_id}/render")
 async def render_project(
     project_id: int,
+    background_id: int | None = None,
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
 ):
     """Trigger video rendering for a project."""
@@ -388,11 +682,123 @@ async def render_project(
             detail="Project must be in AUDIO_READY status to render",
         )
 
-    # TODO: Trigger rendering via pipeline
-
     repo.update_status(project_id, VideoProjectStatus.RENDERING)
 
+    # Trigger rendering in background
+    background_tasks.add_task(
+        render_video_task,
+        project_id=project_id,
+        background_id=background_id,
+    )
+
     return VideoProjectResponse.model_validate(project)
+
+
+async def render_video_task(project_id: int, background_id: int | None = None):
+    """Background task to render video."""
+    from ...main import SessionLocal
+
+    db = SessionLocal()
+    try:
+        repo = VideoProjectRepository(db)
+        char_repo = CharacterRepository(db)
+        asset_repo = AssetRepository(db)
+
+        project = repo.get_by_id(project_id)
+
+        if not project or not project.script_json or not project.voiceover_path:
+            logger.error(f"Project {project_id} not ready for rendering")
+            return
+
+        try:
+            # Reconstruct script from JSON
+            script_data = project.script_json
+            lines = [
+                DialogueLine(
+                    speaker_role=CharacterRole(line["speaker_role"]),
+                    speaker_name=line["speaker_name"],
+                    line=line["line"],
+                    pose=line.get("pose", "standing"),
+                    scene_number=line["scene_number"],
+                )
+                for line in script_data.get("lines", [])
+            ]
+
+            script = DialogueScript(
+                topic=script_data["topic"],
+                context_style=ContextStyle(script_data["context_style"]),
+                lines=lines,
+                takeaway=script_data.get("takeaway", ""),
+            )
+
+            # Get background
+            if background_id:
+                background = asset_repo.get_background_by_id(background_id)
+                background_path = Path(background.file_path) if background else None
+            else:
+                # Use first available background
+                backgrounds = asset_repo.list_backgrounds()
+                background_path = Path(backgrounds[0].file_path) if backgrounds else None
+
+            if not background_path or not background_path.exists():
+                raise ValueError("No background image available")
+
+            # Get character assets
+            questioner = char_repo.get_by_id(project.questioner_id)
+            explainer = char_repo.get_by_id(project.explainer_id)
+
+            character_assets = {}
+
+            if questioner:
+                q_assets = asset_manager.get_character_assets(questioner.id)
+                for asset in q_assets:
+                    character_assets[f"questioner_{asset['pose']}"] = Path(asset["file_path"])
+
+            if explainer:
+                e_assets = asset_manager.get_character_assets(explainer.id)
+                for asset in e_assets:
+                    character_assets[f"explainer_{asset['pose']}"] = Path(asset["file_path"])
+
+            # Get music if specified
+            music_path = None
+            if project.background_music_id:
+                music = asset_repo.get_music_by_id(project.background_music_id)
+                if music:
+                    music_path = Path(music.file_path)
+
+            # Render video
+            output_dir = settings.video.projects_dir / "videos"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"project_{project_id}.mp4"
+
+            result = await ffmpeg_renderer.render_video(
+                script=script,
+                voiceover_path=Path(project.voiceover_path),
+                background_path=background_path,
+                character_assets=character_assets,
+                output_path=output_path,
+                music_path=music_path,
+            )
+
+            # Update project with output
+            repo.update_output(
+                project_id=project_id,
+                output_path=str(result.output_path),
+                duration_seconds=result.duration_seconds,
+            )
+            repo.update_status(project_id, VideoProjectStatus.COMPLETED)
+
+            logger.info(f"Video rendered for project {project_id}")
+
+        except Exception as e:
+            logger.error(f"Video rendering failed for project {project_id}: {e}")
+            repo.update_status(
+                project_id=project_id,
+                status=VideoProjectStatus.FAILED,
+                error_message=f"Video rendering failed: {str(e)}",
+            )
+    finally:
+        db.close()
 
 
 @router.get("/projects/{project_id}/download")
@@ -447,8 +853,16 @@ async def preview_audio(
 @router.get("/voices")
 async def list_voices():
     """List available Eleven Labs voices."""
-    # TODO: Fetch from VoiceoverService
-    return {"voices": []}
+    try:
+        voiceover_service = get_voiceover_service()
+        voices = await voiceover_service.list_voices()
+        return {"voices": voices}
+    except HTTPException:
+        # API key not configured
+        return {"voices": [], "error": "Eleven Labs API not configured"}
+    except Exception as e:
+        logger.error(f"Failed to fetch voices: {e}")
+        return {"voices": [], "error": str(e)}
 
 
 @router.post("/settings")
@@ -457,5 +871,9 @@ async def update_settings(
     default_explainer_voice: str | None = None,
 ):
     """Update default voice settings."""
-    # TODO: Persist settings
-    return {"status": "updated"}
+    # For now, these would need to be persisted to a config store
+    # This is a placeholder that could be extended
+    return {
+        "status": "updated",
+        "note": "Voice settings are currently managed via environment variables"
+    }
