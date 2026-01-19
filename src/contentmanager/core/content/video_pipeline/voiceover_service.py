@@ -170,10 +170,11 @@ class VoiceoverService:
         import subprocess
 
         # Create file list for ffmpeg concat
+        # Use only filenames since concat paths are relative to the list file
         list_file = output_path.parent / "concat_list.txt"
         with open(list_file, "w") as f:
             for segment in segments:
-                f.write(f"file '{segment.file_path}'\n")
+                f.write(f"file '{Path(segment.file_path).name}'\n")
 
         subprocess.run(
             [

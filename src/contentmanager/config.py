@@ -1,7 +1,7 @@
 """Application configuration."""
 
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseSettings(BaseSettings):
@@ -9,8 +9,12 @@ class DatabaseSettings(BaseSettings):
 
     url: str = "sqlite:///./data/contentmanager.db"
 
-    class Config:
-        env_prefix = "DATABASE_"
+    model_config = SettingsConfigDict(
+        env_prefix="DATABASE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class ClaudeSettings(BaseSettings):
@@ -19,8 +23,12 @@ class ClaudeSettings(BaseSettings):
     api_key: str = ""
     model: str = "claude-sonnet-4-20250514"
 
-    class Config:
-        env_prefix = "CLAUDE_"
+    model_config = SettingsConfigDict(
+        env_prefix="CLAUDE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class VideoSettings(BaseSettings):
@@ -44,8 +52,12 @@ class VideoSettings(BaseSettings):
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
 
-    class Config:
-        env_prefix = "VIDEO_"
+    model_config = SettingsConfigDict(
+        env_prefix="VIDEO_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class Settings(BaseSettings):
@@ -58,9 +70,11 @@ class Settings(BaseSettings):
     claude: ClaudeSettings = ClaudeSettings()
     video: VideoSettings = VideoSettings()
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()
