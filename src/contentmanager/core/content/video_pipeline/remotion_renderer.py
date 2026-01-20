@@ -174,6 +174,7 @@ class RemotionRenderer:
         output_path: Path,
         line_timings: list[dict[str, Any]],
         character_assets: dict[str, dict[str, Path]] | None = None,
+        character_type: str = "lottie",
     ) -> dict[str, Any]:
         """Build Remotion render configuration."""
         # Get character names from script
@@ -195,6 +196,7 @@ class RemotionRenderer:
             "title": script.topic,
             "takeaway": script.takeaway or "Thanks for watching!",
             "outputPath": str(output_path.absolute()),
+            "characterType": character_type,  # 'svg' or 'lottie'
         }
 
         # Add character images if available

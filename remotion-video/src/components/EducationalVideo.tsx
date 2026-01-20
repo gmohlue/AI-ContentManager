@@ -1,6 +1,7 @@
 import React from 'react';
 import { AbsoluteFill, Audio, useCurrentFrame, useVideoConfig, staticFile, Sequence, interpolate } from 'remotion';
 import { Character } from './Character';
+import { LottieCharacter } from './LottieCharacter';
 import { DialogueBox } from './DialogueBox';
 
 interface DialogueLine {
@@ -27,6 +28,7 @@ interface VideoProps {
   explainerImages?: CharacterImages;
   title: string;
   takeaway: string;
+  characterType?: 'svg' | 'lottie';  // Switch between SVG stick figures and Lottie animations
 }
 
 // Detect emotion from text content
@@ -55,6 +57,7 @@ export const EducationalVideo: React.FC<VideoProps> = ({
   explainerImages,
   title,
   takeaway,
+  characterType = 'lottie',  // Default to Lottie for smoother animations
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height, durationInFrames } = useVideoConfig();
@@ -155,8 +158,8 @@ export const EducationalVideo: React.FC<VideoProps> = ({
         </div>
       )}
 
-      {/* Characters - black outline stickmen */}
-      {!showTitle && (
+      {/* Characters - SVG or Lottie based on characterType */}
+      {!showTitle && characterType === 'svg' && (
         <>
           <Character
             name={questionerName}
@@ -169,6 +172,26 @@ export const EducationalVideo: React.FC<VideoProps> = ({
           <Character
             name={explainerName}
             color="black"
+            isSpeaking={explainerSpeaking}
+            isListening={questionerSpeaking}
+            position="right"
+            emotion={getCharacterEmotion('explainer')}
+          />
+        </>
+      )}
+
+      {/* Lottie animated characters */}
+      {!showTitle && characterType === 'lottie' && (
+        <>
+          <LottieCharacter
+            name={questionerName}
+            isSpeaking={questionerSpeaking}
+            isListening={explainerSpeaking}
+            position="left"
+            emotion={getCharacterEmotion('questioner')}
+          />
+          <LottieCharacter
+            name={explainerName}
             isSpeaking={explainerSpeaking}
             isListening={questionerSpeaking}
             position="right"

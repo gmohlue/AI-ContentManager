@@ -19,6 +19,7 @@ interface VideoProps {
   explainerName: string;
   title: string;
   takeaway: string;
+  characterType?: 'svg' | 'lottie';
 }
 
 // Default props for preview in Remotion Studio
@@ -45,6 +46,7 @@ const defaultProps: VideoProps = {
   explainerName: 'Dr. Knowledge',
   title: 'Why is the Sky Blue?',
   takeaway: 'Blue light gets scattered more by tiny air particles, making our sky appear blue!',
+  characterType: 'lottie',  // Use Lottie animations by default
 };
 
 export const RemotionRoot: React.FC = () => {

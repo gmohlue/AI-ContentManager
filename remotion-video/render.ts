@@ -27,6 +27,7 @@ interface RenderConfig {
   title: string;
   takeaway: string;
   outputPath: string;
+  characterType?: 'svg' | 'lottie';
 }
 
 async function renderVideo(configPath: string) {
@@ -96,6 +97,7 @@ async function renderVideo(configPath: string) {
     explainerImages,
     title: config.title,
     takeaway: config.takeaway,
+    characterType: config.characterType || 'lottie',  // Default to Lottie animations
   };
 
   const composition = await selectComposition({

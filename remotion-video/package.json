@@ -20,10 +20,12 @@
   "dependencies": {
     "@remotion/bundler": "^4.0.407",
     "@remotion/cli": "^4.0.407",
+    "@remotion/lottie": "^4.0.407",
     "@remotion/media-utils": "^4.0.407",
     "@remotion/renderer": "^4.0.407",
     "@types/node": "^22.19.7",
     "@types/react": "^19.2.9",
+    "lottie-web": "^5.13.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "remotion": "^4.0.407",
