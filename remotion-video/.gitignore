@@ -1,6 +1,8 @@
 node_modules/
 dist/
-public/
+# Ignore public except lottie folder
+public/*
+!public/lottie/
 *.log
 .DS_Store
 package-lock.json

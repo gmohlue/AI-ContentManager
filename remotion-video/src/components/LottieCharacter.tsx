@@ -12,13 +12,13 @@ interface LottieCharacterProps {
   emotion?: 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited';
 }
 
-// Map of animation states to Lottie files
+// Map of animation states to Lottie files (black outline versions)
 const ANIMATION_FILES: Record<AnimationState, string> = {
-  idle: 'lottie/stickman-talking.json',
-  talking: 'lottie/stickman-talking.json',
-  thinking: 'lottie/thinking.json',
-  walking: 'lottie/stickman-walking.json',
-  celebrating: 'lottie/celebrating.json',
+  idle: 'lottie/stickman-talking-black.json',
+  talking: 'lottie/stickman-talking-black.json',
+  thinking: 'lottie/thinking-black.json',
+  walking: 'lottie/stickman-walking-black.json',
+  celebrating: 'lottie/celebrating-black.json',
 };
 
 // Determine animation state based on character state
