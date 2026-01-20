@@ -1,10 +1,12 @@
 import React from 'react';
-import { Img, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { useCurrentFrame, useVideoConfig } from 'remotion';
 
 interface CharacterImages {
   neutral: string;
   talking: string;
 }
+
+type MovementType = 'idle' | 'talking' | 'walking' | 'waving' | 'pointing' | 'thinking' | 'reacting' | 'celebrating';
 
 interface CharacterProps {
   name: string;
@@ -16,6 +18,21 @@ interface CharacterProps {
   images?: CharacterImages;
 }
 
+// Determine movement type based on dialogue context
+const getMovementFromContext = (isSpeaking: boolean, isListening: boolean, emotion: string): MovementType => {
+  if (isSpeaking) {
+    if (emotion === 'excited') return 'celebrating';
+    if (emotion === 'thinking') return 'thinking';
+    return 'talking';
+  }
+  if (isListening) {
+    if (emotion === 'surprised') return 'reacting';
+    if (emotion === 'thinking') return 'thinking';
+    return 'idle';
+  }
+  return 'idle';
+};
+
 export const Character: React.FC<CharacterProps> = ({
   name,
   color,
@@ -23,228 +40,258 @@ export const Character: React.FC<CharacterProps> = ({
   isListening,
   position,
   emotion = 'neutral',
-  images,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Breathing animation (subtle scale)
-  const breathe = Math.sin(frame / fps * 1.5) * 0.02 + 1;
-
-  // Speaking animation - bounce when talking
-  const speakBounce = isSpeaking
-    ? Math.sin(frame / fps * 8) * 10
-    : 0;
-
-  // Head tilt when listening
-  const headTilt = isListening
-    ? Math.sin(frame / fps * 2) * 3
-    : isSpeaking ? Math.sin(frame / fps * 4) * 2 : 0;
-
-  // Body lean toward other character when listening
-  const bodyLean = isListening ? (position === 'left' ? 5 : -5) : 0;
-
   const isLeftPosition = position === 'left';
+  const cycle = frame / fps;
 
-  // If we have images, render image-based character
-  if (images) {
-    const imageSrc = isSpeaking ? staticFile(images.talking) : staticFile(images.neutral);
+  // Get current movement type
+  const movement = getMovementFromContext(isSpeaking, isListening, emotion);
 
-    return (
-      <div
-        style={{
-          position: 'absolute',
-          [isLeftPosition ? 'left' : 'right']: 60,
-          bottom: 350,
-          transform: `
-            scale(${breathe})
-            translateY(${speakBounce}px)
-            rotate(${bodyLean + headTilt}deg)
-          `,
-          transformOrigin: 'bottom center',
-        }}
-      >
-        <Img
-          src={imageSrc}
-          style={{
-            width: 350,
-            height: 'auto',
-            filter: 'drop-shadow(0 10px 20px rgba(0,0,0,0.3))',
-          }}
-        />
-        {/* Name label */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: -50,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            color: 'white',
-            fontSize: 28,
-            fontWeight: 'bold',
-            textShadow: '2px 2px 8px rgba(0,0,0,0.8)',
-            whiteSpace: 'nowrap',
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            padding: '8px 16px',
-            borderRadius: 8,
-          }}
-        >
-          {name}
-        </div>
-      </div>
-    );
-  }
+  // Animation parameters based on movement
+  const getAnimationParams = () => {
+    switch (movement) {
+      case 'talking':
+        return {
+          headBob: Math.sin(cycle * 6) * 5,
+          leftArmAngle: -30 + Math.sin(cycle * 4) * 25,
+          rightArmAngle: -150 + Math.sin(cycle * 4 + 1) * 20,
+          bodyLean: Math.sin(cycle * 3) * 3,
+          mouthOpen: Math.abs(Math.sin(cycle * 10)) * 0.8,
+        };
 
-  // Fallback: SVG-based character
-  // Eye blink (every ~3 seconds)
-  const blinkCycle = (frame % (fps * 3)) / fps;
-  const isBlinking = blinkCycle < 0.1;
+      case 'waving':
+        return {
+          headBob: Math.sin(cycle * 2) * 3,
+          leftArmAngle: -60,
+          rightArmAngle: -160 + Math.sin(cycle * 8) * 30, // Waving arm
+          bodyLean: 0,
+          mouthOpen: 0.3,
+        };
 
-  // Eyebrow animation based on emotion
-  const eyebrowRaise = emotion === 'surprised' ? -8 :
-                       emotion === 'happy' ? -3 :
-                       emotion === 'thinking' ? 5 : 0;
+      case 'pointing':
+        return {
+          headBob: 0,
+          leftArmAngle: -70,
+          rightArmAngle: -180, // Pointing straight
+          bodyLean: 5,
+          mouthOpen: 0,
+        };
 
-  // Arm gesture when speaking
-  const armGesture = isSpeaking ? Math.sin(frame / fps * 6) * 15 : 0;
+      case 'thinking':
+        return {
+          headBob: Math.sin(cycle * 1) * 2,
+          leftArmAngle: -60,
+          rightArmAngle: -45, // Hand on chin
+          bodyLean: -5,
+          mouthOpen: 0,
+        };
 
-  // Mouth animation for speaking
-  const mouthOpen = isSpeaking
-    ? Math.abs(Math.sin(frame / fps * 10)) * 0.8 + 0.2
-    : 0;
+      case 'reacting':
+        return {
+          headBob: Math.sin(cycle * 8) * 8,
+          leftArmAngle: -120 + Math.sin(cycle * 6) * 15,
+          rightArmAngle: -60 + Math.sin(cycle * 6) * 15,
+          bodyLean: Math.sin(cycle * 4) * 5,
+          mouthOpen: 0.6,
+        };
 
-  const facingDirection = isLeftPosition ? 1 : -1;
+      case 'celebrating':
+        return {
+          headBob: Math.abs(Math.sin(cycle * 6)) * 10,
+          leftArmAngle: -150 + Math.sin(cycle * 5) * 20,
+          rightArmAngle: -30 + Math.sin(cycle * 5 + Math.PI) * 20,
+          bodyLean: Math.sin(cycle * 4) * 5,
+          mouthOpen: 0.7,
+        };
+
+      default: // idle
+        return {
+          headBob: Math.sin(cycle * 1.5) * 2,
+          leftArmAngle: -70 + Math.sin(cycle * 1) * 5,
+          rightArmAngle: -110 + Math.sin(cycle * 1) * 5,
+          bodyLean: 0,
+          mouthOpen: 0,
+        };
+    }
+  };
+
+  const anim = getAnimationParams();
+
+  // Blinking
+  const blinkCycle = (frame % Math.floor(fps * 3.5)) / fps;
+  const isBlinking = blinkCycle < 0.08;
+
+  // Character position
+  const xPos = isLeftPosition ? 280 : 800;
+
+  // Calculate arm endpoints
+  const shoulderY = 120;
+  const armLength = 70;
+
+  const leftArmEnd = {
+    x: 150 + Math.cos((anim.leftArmAngle * Math.PI) / 180) * armLength,
+    y: shoulderY - Math.sin((anim.leftArmAngle * Math.PI) / 180) * armLength,
+  };
+
+  const rightArmEnd = {
+    x: 150 + Math.cos((anim.rightArmAngle * Math.PI) / 180) * armLength,
+    y: shoulderY - Math.sin((anim.rightArmAngle * Math.PI) / 180) * armLength,
+  };
+
+  // Stroke width for clean lines
+  const strokeWidth = 6;
 
   return (
     <div
       style={{
         position: 'absolute',
-        [isLeftPosition ? 'left' : 'right']: 80,
+        left: xPos,
         bottom: 400,
-        transform: `
-          scale(${breathe})
-          translateY(${speakBounce}px)
-          rotate(${bodyLean}deg)
-          scaleX(${facingDirection})
-        `,
-        transformOrigin: 'bottom center',
+        transform: `translateX(-50%)`,
       }}
     >
-      {/* Character Body */}
-      <svg width="280" height="400" viewBox="0 0 280 400">
-        {/* Body */}
-        <ellipse cx="140" cy="300" rx="80" ry="100" fill={color} />
+      <svg
+        width="300"
+        height="350"
+        viewBox="0 0 300 350"
+        style={{ overflow: 'visible' }}
+      >
+        {/* Body lean transform */}
+        <g transform={`rotate(${anim.bodyLean}, 150, 250)`}>
 
-        {/* Arms */}
-        <g transform={`rotate(${armGesture}, 60, 250)`}>
-          <ellipse cx="40" cy="280" rx="25" ry="50" fill={color} />
-        </g>
-        <g transform={`rotate(${-armGesture}, 220, 250)`}>
-          <ellipse cx="240" cy="280" rx="25" ry="50" fill={color} />
-        </g>
-
-        {/* Head */}
-        <g transform={`rotate(${headTilt}, 140, 120)`}>
-          <ellipse cx="140" cy="100" rx="70" ry="75" fill={color} />
-
-          {/* Eyes */}
-          <g>
-            {/* Left eye */}
-            <ellipse
-              cx="110"
-              cy="85"
-              rx={isBlinking ? 15 : 15}
-              ry={isBlinking ? 2 : 20}
-              fill="white"
+          {/* Head */}
+          <g transform={`translate(0, ${anim.headBob})`}>
+            {/* Head circle - outline only */}
+            <circle
+              cx="150"
+              cy="50"
+              r="40"
+              fill="none"
+              stroke="black"
+              strokeWidth={strokeWidth}
             />
-            {!isBlinking && (
-              <circle cx="112" cy="88" r="8" fill="#333" />
+
+            {/* Eyes */}
+            {isBlinking ? (
+              // Blinking - horizontal lines
+              <>
+                <line x1="130" y1="45" x2="142" y2="45" stroke="black" strokeWidth="3" strokeLinecap="round" />
+                <line x1="158" y1="45" x2="170" y2="45" stroke="black" strokeWidth="3" strokeLinecap="round" />
+              </>
+            ) : (
+              // Open eyes - simple dots
+              <>
+                <circle cx="136" cy="45" r="5" fill="black" />
+                <circle cx="164" cy="45" r="5" fill="black" />
+              </>
             )}
 
-            {/* Right eye */}
-            <ellipse
-              cx="170"
-              cy="85"
-              rx={isBlinking ? 15 : 15}
-              ry={isBlinking ? 2 : 20}
-              fill="white"
-            />
-            {!isBlinking && (
-              <circle cx="168" cy="88" r="8" fill="#333" />
+            {/* Mouth */}
+            {anim.mouthOpen > 0.1 ? (
+              // Open mouth - oval
+              <ellipse
+                cx="150"
+                cy="70"
+                rx={6 + anim.mouthOpen * 6}
+                ry={3 + anim.mouthOpen * 10}
+                fill="none"
+                stroke="black"
+                strokeWidth="3"
+              />
+            ) : (
+              // Closed mouth - simple line or slight smile
+              <path
+                d="M 140 68 Q 150 75 160 68"
+                fill="none"
+                stroke="black"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
             )}
           </g>
 
-          {/* Eyebrows */}
+          {/* Neck */}
           <line
-            x1="95" y1={60 + eyebrowRaise}
-            x2="125" y2={65 + eyebrowRaise}
-            stroke="#333"
-            strokeWidth="4"
-            strokeLinecap="round"
-          />
-          <line
-            x1="155" y1={65 + eyebrowRaise}
-            x2="185" y2={60 + eyebrowRaise}
-            stroke="#333"
-            strokeWidth="4"
+            x1="150"
+            y1={90 + anim.headBob}
+            x2="150"
+            y2="110"
+            stroke="black"
+            strokeWidth={strokeWidth}
             strokeLinecap="round"
           />
 
-          {/* Mouth */}
-          {isSpeaking ? (
-            // Open mouth when speaking
-            <ellipse
-              cx="140"
-              cy="135"
-              rx={15 + mouthOpen * 10}
-              ry={5 + mouthOpen * 15}
-              fill="#c0392b"
-            />
-          ) : emotion === 'happy' || emotion === 'excited' ? (
-            // Happy smile
-            <path
-              d="M 115 130 Q 140 160 165 130"
-              fill="none"
-              stroke="#333"
-              strokeWidth="4"
-              strokeLinecap="round"
-            />
-          ) : emotion === 'surprised' ? (
-            // Surprised O mouth
-            <ellipse cx="140" cy="135" rx="12" ry="15" fill="#c0392b" />
-          ) : (
-            // Neutral slight smile
-            <path
-              d="M 120 135 Q 140 145 160 135"
-              fill="none"
-              stroke="#333"
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          )}
+          {/* Body */}
+          <line
+            x1="150"
+            y1="110"
+            x2="150"
+            y2="200"
+            stroke="black"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
 
-          {/* Glasses for Dr. Knowledge (check by color) */}
-          {color === '#27ae60' && (
-            <>
-              <rect x="90" y="70" width="40" height="35" rx="5" fill="none" stroke="#333" strokeWidth="3" />
-              <rect x="150" y="70" width="40" height="35" rx="5" fill="none" stroke="#333" strokeWidth="3" />
-              <line x1="130" y1="87" x2="150" y2="87" stroke="#333" strokeWidth="3" />
-            </>
-          )}
+          {/* Left Arm */}
+          <line
+            x1="150"
+            y1={shoulderY}
+            x2={leftArmEnd.x}
+            y2={leftArmEnd.y}
+            stroke="black"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
+
+          {/* Right Arm */}
+          <line
+            x1="150"
+            y1={shoulderY}
+            x2={rightArmEnd.x}
+            y2={rightArmEnd.y}
+            stroke="black"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
+
+          {/* Left Leg */}
+          <line
+            x1="150"
+            y1="200"
+            x2="120"
+            y2="290"
+            stroke="black"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
+
+          {/* Right Leg */}
+          <line
+            x1="150"
+            y1="200"
+            x2="180"
+            y2="290"
+            stroke="black"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
         </g>
       </svg>
 
-      {/* Name label */}
+      {/* Simple name label */}
       <div
         style={{
           position: 'absolute',
-          bottom: -40,
+          bottom: 20,
           left: '50%',
-          transform: `translateX(-50%) scaleX(${facingDirection})`,
-          color: 'white',
-          fontSize: 24,
+          transform: 'translateX(-50%)',
+          fontSize: 20,
           fontWeight: 'bold',
-          textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+          color: 'black',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
           whiteSpace: 'nowrap',
         }}
       >

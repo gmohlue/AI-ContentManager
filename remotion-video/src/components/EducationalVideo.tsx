@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Audio, Img, useCurrentFrame, useVideoConfig, staticFile, Sequence, delayRender, continueRender } from 'remotion';
+import { AbsoluteFill, Audio, useCurrentFrame, useVideoConfig, staticFile, Sequence, interpolate } from 'remotion';
 import { Character } from './Character';
 import { DialogueBox } from './DialogueBox';
 
@@ -29,6 +29,22 @@ interface VideoProps {
   takeaway: string;
 }
 
+// Detect emotion from text content
+const detectEmotion = (text: string): 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited' => {
+  const lowerText = text.toLowerCase();
+
+  if (lowerText.includes('!') && (lowerText.includes('wow') || lowerText.includes('amazing') || lowerText.includes('incredible'))) {
+    return 'excited';
+  }
+  if (lowerText.includes('?')) {
+    return 'thinking';
+  }
+  if (lowerText.includes('great') || lowerText.includes('exactly') || lowerText.includes('yes')) {
+    return 'happy';
+  }
+  return 'neutral';
+};
+
 export const EducationalVideo: React.FC<VideoProps> = ({
   dialogueLines,
   backgroundImage,
@@ -51,122 +67,112 @@ export const EducationalVideo: React.FC<VideoProps> = ({
   const questionerSpeaking = currentLine?.speaker_role === 'questioner';
   const explainerSpeaking = currentLine?.speaker_role === 'explainer';
 
-  // Determine emotions based on dialogue
-  const getEmotion = (role: 'questioner' | 'explainer'): 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited' => {
+  // Get emotions based on current dialogue
+  const getCharacterEmotion = (role: 'questioner' | 'explainer'): 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited' => {
     if (!currentLine) return 'neutral';
-    if (currentLine.speaker_role !== role) {
-      // Listening - show interest
-      return currentLine.line.includes('?') ? 'thinking' : 'neutral';
+
+    if (currentLine.speaker_role === role) {
+      return detectEmotion(currentLine.line);
+    } else {
+      const text = currentLine.line.toLowerCase();
+      if (text.includes('?')) return 'thinking';
+      if (text.includes('!')) return 'surprised';
+      return 'neutral';
     }
-    // Speaking - match emotion to content
-    const text = currentLine.line.toLowerCase();
-    if (text.includes('!') || text.includes('great') || text.includes('amazing') || text.includes('wow')) {
-      return 'excited';
-    }
-    if (text.includes('?')) return 'thinking';
-    if (text.includes('exactly') || text.includes('perfect') || text.includes('yes')) return 'happy';
-    return 'neutral';
   };
 
   // Title sequence (first 2 seconds)
-  const showTitle = frame < fps * 2;
-  const titleOpacity = showTitle
-    ? Math.min(1, frame / (fps * 0.5)) * Math.max(0, 1 - (frame - fps * 1.5) / (fps * 0.5))
-    : 0;
+  const titleDuration = fps * 2;
+  const showTitle = frame < titleDuration;
+  const titleOpacity = interpolate(
+    frame,
+    [0, fps * 0.3, titleDuration - fps * 0.3, titleDuration],
+    [0, 1, 1, 0],
+    { extrapolateRight: 'clamp' }
+  );
 
   // Takeaway sequence (last 3 seconds)
   const takeawayStart = durationInFrames - fps * 3;
   const showTakeaway = frame >= takeawayStart;
-  const takeawayOpacity = showTakeaway
-    ? Math.min(1, (frame - takeawayStart) / (fps * 0.5))
-    : 0;
+  const takeawayOpacity = interpolate(
+    frame,
+    [takeawayStart, takeawayStart + fps * 0.3],
+    [0, 1],
+    { extrapolateRight: 'clamp' }
+  );
 
-  // Use staticFile for assets served from public folder
-  const bgSrc = backgroundImage.startsWith('http') ? backgroundImage : staticFile(backgroundImage);
+  // Use staticFile for assets
   const audioSrc = audioFile ? (audioFile.startsWith('http') ? audioFile : staticFile(audioFile)) : '';
 
   return (
     <AbsoluteFill>
-      {/* Background */}
-      <Img
-        src={bgSrc}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-        }}
-      />
-
-      {/* Gradient overlay for better text readability */}
+      {/* Pure white background */}
       <div
         style={{
           position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '50%',
-          background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
+          width: '100%',
+          height: '100%',
+          background: 'white',
         }}
       />
 
       {/* Audio */}
       {audioSrc && <Audio src={audioSrc} />}
 
-      {/* Title card */}
-      {titleOpacity > 0 && (
+      {/* Simple Title card */}
+      {showTitle && titleOpacity > 0 && (
         <div
           style={{
             position: 'absolute',
-            top: '35%',
+            top: '40%',
             left: '50%',
             transform: 'translate(-50%, -50%)',
             opacity: titleOpacity,
             textAlign: 'center',
+            width: width - 80,
           }}
         >
           <div
             style={{
-              fontSize: 72,
+              fontSize: 56,
               fontWeight: 'bold',
-              color: 'white',
-              textShadow: '0 4px 20px rgba(0,0,0,0.8)',
-              marginBottom: 20,
+              color: 'black',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
             }}
           >
             {title}
           </div>
           <div
             style={{
-              fontSize: 36,
-              color: '#FFD700',
-              textShadow: '0 2px 10px rgba(0,0,0,0.8)',
+              marginTop: 20,
+              fontSize: 28,
+              color: '#333',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
             }}
           >
-            with {questionerName} & {explainerName}
+            {questionerName} & {explainerName}
           </div>
         </div>
       )}
 
-      {/* Characters */}
+      {/* Characters - black outline stickmen */}
       {!showTitle && (
         <>
           <Character
             name={questionerName}
-            color="#3498db"
+            color="black"
             isSpeaking={questionerSpeaking}
             isListening={explainerSpeaking}
             position="left"
-            emotion={getEmotion('questioner')}
-            images={questionerImages}
+            emotion={getCharacterEmotion('questioner')}
           />
           <Character
             name={explainerName}
-            color="#27ae60"
+            color="black"
             isSpeaking={explainerSpeaking}
             isListening={questionerSpeaking}
             position="right"
-            emotion={getEmotion('explainer')}
-            images={explainerImages}
+            emotion={getCharacterEmotion('explainer')}
           />
         </>
       )}
@@ -181,15 +187,15 @@ export const EducationalVideo: React.FC<VideoProps> = ({
           <DialogueBox
             speaker={line.speaker_name}
             text={line.line}
-            speakerColor={line.speaker_role === 'questioner' ? '#3498db' : '#27ae60'}
+            speakerColor="black"
             startFrame={0}
             durationFrames={line.end_frame - line.start_frame}
           />
         </Sequence>
       ))}
 
-      {/* Takeaway card */}
-      {takeawayOpacity > 0 && (
+      {/* Simple Takeaway card */}
+      {showTakeaway && takeawayOpacity > 0 && (
         <div
           style={{
             position: 'absolute',
@@ -198,28 +204,30 @@ export const EducationalVideo: React.FC<VideoProps> = ({
             transform: 'translate(-50%, -50%)',
             opacity: takeawayOpacity,
             textAlign: 'center',
-            padding: 40,
-            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-            borderRadius: 20,
-            maxWidth: width - 120,
-            border: '3px solid #FFD700',
+            padding: '35px 45px',
+            backgroundColor: 'white',
+            borderRadius: 16,
+            maxWidth: width - 80,
+            border: '4px solid black',
           }}
         >
           <div
             style={{
-              fontSize: 36,
-              color: '#FFD700',
-              marginBottom: 20,
+              fontSize: 28,
+              color: 'black',
+              marginBottom: 16,
               fontWeight: 'bold',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
             }}
           >
             Key Takeaway
           </div>
           <div
             style={{
-              fontSize: 32,
-              color: 'white',
+              fontSize: 24,
+              color: 'black',
               lineHeight: 1.5,
+              fontFamily: 'system-ui, -apple-system, sans-serif',
             }}
           >
             {takeaway}

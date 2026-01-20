@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DialogueScript, RenderResult
+from .animation_prompts import generate_scene_prompts, save_prompts_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ class RemotionRenderer:
 
         # Clean up config
         config_path.unlink(missing_ok=True)
+
+        # Generate AI animation prompts for each scene
+        self._generate_animation_prompts(script, scene_durations, output_path)
 
         return RenderResult(
             output_path=str(output_path),
@@ -211,3 +215,29 @@ class RemotionRenderer:
                     }
 
         return config
+
+    def _generate_animation_prompts(
+        self,
+        script: DialogueScript,
+        scene_durations: list[float],
+        output_path: Path,
+    ) -> None:
+        """Generate AI animation prompts for each scene and save to file."""
+        # Convert script lines to dict format for prompt generator
+        lines_data = [
+            {
+                "speaker_role": line.speaker_role.value,
+                "speaker_name": line.speaker_name,
+                "line": line.line,
+            }
+            for line in script.lines
+        ]
+
+        # Generate prompts
+        scene_prompts = generate_scene_prompts(lines_data, scene_durations)
+
+        # Save prompts to file next to the video
+        prompts_path = output_path.parent / f"{output_path.stem}_animation_prompts.txt"
+        save_prompts_to_file(scene_prompts, str(prompts_path))
+
+        logger.info(f"AI animation prompts saved to: {prompts_path}")

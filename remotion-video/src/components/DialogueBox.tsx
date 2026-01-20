@@ -1,5 +1,5 @@
 import React from 'react';
-import { interpolate, useCurrentFrame, useVideoConfig, spring } from 'remotion';
+import { interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 
 interface DialogueBoxProps {
   speaker: string;
@@ -17,103 +17,106 @@ export const DialogueBox: React.FC<DialogueBoxProps> = ({
   durationFrames,
 }) => {
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
+  const { fps, width } = useVideoConfig();
 
   const relativeFrame = frame - startFrame;
-  const progress = relativeFrame / durationFrames;
 
-  // Entrance animation
-  const slideIn = spring({
-    frame: relativeFrame,
-    fps,
-    config: { damping: 15, stiffness: 100 },
+  // Simple fade in/out
+  const fadeIn = interpolate(relativeFrame, [0, fps * 0.2], [0, 1], {
+    extrapolateRight: 'clamp',
   });
 
-  // Exit animation
-  const exitProgress = Math.max(0, (relativeFrame - durationFrames + fps * 0.3) / (fps * 0.3));
-  const slideOut = interpolate(exitProgress, [0, 1], [0, 100]);
+  const fadeOut = interpolate(
+    relativeFrame,
+    [durationFrames - fps * 0.2, durationFrames],
+    [1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
 
-  // Text typewriter effect
+  const opacity = Math.min(fadeIn, fadeOut);
+
+  // Typewriter effect
+  const typewriterDuration = Math.min(durationFrames * 0.6, fps * 2);
   const charsToShow = Math.floor(
-    interpolate(relativeFrame, [0, Math.min(durationFrames * 0.7, fps * 2)], [0, text.length], {
+    interpolate(relativeFrame, [0, typewriterDuration], [0, text.length], {
       extrapolateRight: 'clamp',
     })
   );
 
   const displayText = text.slice(0, charsToShow);
 
-  // Wrap text into lines
-  const wrapText = (text: string, maxChars: number = 45): string[] => {
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      if ((currentLine + ' ' + word).trim().length <= maxChars) {
-        currentLine = (currentLine + ' ' + word).trim();
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      }
-    }
-    if (currentLine) lines.push(currentLine);
-    return lines;
-  };
-
-  const lines = wrapText(displayText);
-
   return (
     <div
       style={{
         position: 'absolute',
-        bottom: 60,
+        bottom: 80,
         left: '50%',
-        transform: `translateX(-50%) translateY(${(1 - slideIn) * 50 + slideOut}px)`,
-        opacity: interpolate(slideIn, [0, 1], [0, 1]) * interpolate(exitProgress, [0, 1], [1, 0]),
-        width: width - 120,
-        padding: '25px 40px',
-        backgroundColor: 'rgba(0, 0, 0, 0.85)',
-        borderRadius: 20,
-        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
-        border: `3px solid ${speakerColor}`,
+        transform: 'translateX(-50%)',
+        opacity,
+        width: width - 60,
+        maxWidth: 950,
       }}
     >
-      {/* Speaker name */}
+      {/* Minimal clean dialogue box */}
       <div
         style={{
-          color: speakerColor,
-          fontSize: 32,
-          fontWeight: 'bold',
-          marginBottom: 15,
-          textShadow: `0 0 20px ${speakerColor}`,
+          background: 'white',
+          borderRadius: 12,
+          padding: '20px 28px',
+          border: '3px solid black',
         }}
       >
-        {speaker}
-      </div>
-
-      {/* Dialogue text */}
-      <div
-        style={{
-          color: 'white',
-          fontSize: 38,
-          lineHeight: 1.4,
-          fontWeight: 500,
-        }}
-      >
-        {lines.map((line, i) => (
-          <div key={i}>{line}</div>
-        ))}
-        {/* Blinking cursor during typing */}
-        {charsToShow < text.length && (
+        {/* Speaker name */}
+        <div
+          style={{
+            position: 'absolute',
+            top: -14,
+            left: 20,
+            background: 'white',
+            padding: '4px 16px',
+            border: '3px solid black',
+            borderRadius: 8,
+          }}
+        >
           <span
             style={{
-              opacity: Math.sin(frame / fps * 8) > 0 ? 1 : 0,
-              color: speakerColor,
+              color: 'black',
+              fontSize: 20,
+              fontWeight: 'bold',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
             }}
           >
-            |
+            {speaker}
           </span>
-        )}
+        </div>
+
+        {/* Dialogue text */}
+        <div
+          style={{
+            marginTop: 8,
+            color: 'black',
+            fontSize: 28,
+            lineHeight: 1.4,
+            fontWeight: 500,
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+          }}
+        >
+          {displayText}
+          {/* Simple cursor */}
+          {charsToShow < text.length && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 2,
+                height: 28,
+                backgroundColor: 'black',
+                marginLeft: 2,
+                opacity: Math.sin(relativeFrame / fps * 10) > 0 ? 1 : 0,
+                verticalAlign: 'middle',
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

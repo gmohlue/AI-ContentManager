@@ -11,6 +11,13 @@ from .voiceover_service import VoiceoverService
 from .ffmpeg_renderer import FFmpegRenderer
 from .asset_manager import AssetManager
 from .pipeline import VideoPipeline
+from .animation_prompts import (
+    generate_scene_prompts,
+    format_prompts_report,
+    save_prompts_to_file,
+    ScenePrompt,
+    AnimationType,
+)
 
 __all__ = [
     "DialogueScript",
@@ -22,4 +29,9 @@ __all__ = [
     "FFmpegRenderer",
     "AssetManager",
     "VideoPipeline",
+    "generate_scene_prompts",
+    "format_prompts_report",
+    "save_prompts_to_file",
+    "ScenePrompt",
+    "AnimationType",
 ]
