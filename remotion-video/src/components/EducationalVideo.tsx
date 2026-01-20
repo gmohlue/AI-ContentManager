@@ -12,12 +12,19 @@ interface DialogueLine {
   emotion?: 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited';
 }
 
+interface CharacterImages {
+  neutral: string;
+  talking: string;
+}
+
 interface VideoProps {
   dialogueLines: DialogueLine[];
   backgroundImage: string;
   audioFile: string;
   questionerName: string;
   explainerName: string;
+  questionerImages?: CharacterImages;
+  explainerImages?: CharacterImages;
   title: string;
   takeaway: string;
 }
@@ -28,6 +35,8 @@ export const EducationalVideo: React.FC<VideoProps> = ({
   audioFile,
   questionerName,
   explainerName,
+  questionerImages,
+  explainerImages,
   title,
   takeaway,
 }) => {
@@ -148,6 +157,7 @@ export const EducationalVideo: React.FC<VideoProps> = ({
             isListening={explainerSpeaking}
             position="left"
             emotion={getEmotion('questioner')}
+            images={questionerImages}
           />
           <Character
             name={explainerName}
@@ -156,6 +166,7 @@ export const EducationalVideo: React.FC<VideoProps> = ({
             isListening={questionerSpeaking}
             position="right"
             emotion={getEmotion('explainer')}
+            images={explainerImages}
           />
         </>
       )}

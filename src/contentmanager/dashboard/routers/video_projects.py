@@ -752,6 +752,7 @@ async def render_video_task(project_id: int, background_id: int | None = None):
 
             character_assets = {}
 
+            # Try to get character assets from database
             if questioner:
                 q_assets = asset_manager.get_character_assets(questioner.id)
                 # Build dict of poses: {pose_name: path}
@@ -769,6 +770,26 @@ async def render_video_task(project_id: int, background_id: int | None = None):
                     e_poses[asset["pose"]] = Path(asset["file_path"])
                 if e_poses:
                     character_assets["explainer"] = e_poses
+
+            # Use stick figures as fallback if no character assets found
+            stick_figures_dir = settings.video.assets_dir / "characters"
+            if "questioner" not in character_assets:
+                stick_q_dir = stick_figures_dir / "stick_questioner"
+                if stick_q_dir.exists():
+                    character_assets["questioner"] = {
+                        "neutral": stick_q_dir / "neutral.png",
+                        "talking": stick_q_dir / "talking.png",
+                    }
+                    logger.info("Using stick figure for questioner")
+
+            if "explainer" not in character_assets:
+                stick_e_dir = stick_figures_dir / "stick_explainer"
+                if stick_e_dir.exists():
+                    character_assets["explainer"] = {
+                        "neutral": stick_e_dir / "neutral.png",
+                        "talking": stick_e_dir / "talking.png",
+                    }
+                    logger.info("Using stick figure for explainer")
 
             # Get music if specified
             music_path = None

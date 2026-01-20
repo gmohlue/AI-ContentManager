@@ -11,12 +11,19 @@ interface DialogueLine {
   end_frame: number;
 }
 
+interface CharacterImages {
+  neutral: string;
+  talking: string;
+}
+
 interface RenderConfig {
   dialogueLines: DialogueLine[];
   backgroundImage: string;
   audioFile: string;
   questionerName: string;
   explainerName: string;
+  questionerImages?: CharacterImages;
+  explainerImages?: CharacterImages;
   title: string;
   takeaway: string;
   outputPath: string;
@@ -46,6 +53,31 @@ async function renderVideo(configPath: string) {
   fs.copyFileSync(config.audioFile, audioDest);
   const staticAudioPath = `audio${audioExt}`;
 
+  // Copy character images if provided
+  let questionerImages: CharacterImages | undefined;
+  let explainerImages: CharacterImages | undefined;
+  const copiedImages: string[] = [];
+
+  if (config.questionerImages) {
+    const qNeutralDest = path.join(publicDir, 'questioner_neutral.png');
+    const qTalkingDest = path.join(publicDir, 'questioner_talking.png');
+    console.log('Copying questioner images');
+    fs.copyFileSync(config.questionerImages.neutral, qNeutralDest);
+    fs.copyFileSync(config.questionerImages.talking, qTalkingDest);
+    questionerImages = { neutral: 'questioner_neutral.png', talking: 'questioner_talking.png' };
+    copiedImages.push(qNeutralDest, qTalkingDest);
+  }
+
+  if (config.explainerImages) {
+    const eNeutralDest = path.join(publicDir, 'explainer_neutral.png');
+    const eTalkingDest = path.join(publicDir, 'explainer_talking.png');
+    console.log('Copying explainer images');
+    fs.copyFileSync(config.explainerImages.neutral, eNeutralDest);
+    fs.copyFileSync(config.explainerImages.talking, eTalkingDest);
+    explainerImages = { neutral: 'explainer_neutral.png', talking: 'explainer_talking.png' };
+    copiedImages.push(eNeutralDest, eTalkingDest);
+  }
+
   console.log('Bundling Remotion project...');
   const bundleLocation = await bundle({
     entryPoint: path.resolve(__dirname, 'src/index.ts'),
@@ -54,18 +86,22 @@ async function renderVideo(configPath: string) {
   });
 
   console.log('Selecting composition...');
+  const inputProps = {
+    dialogueLines: config.dialogueLines,
+    backgroundImage: staticBgPath,
+    audioFile: staticAudioPath,
+    questionerName: config.questionerName,
+    explainerName: config.explainerName,
+    questionerImages,
+    explainerImages,
+    title: config.title,
+    takeaway: config.takeaway,
+  };
+
   const composition = await selectComposition({
     serveUrl: bundleLocation,
     id: 'EducationalVideo',
-    inputProps: {
-      dialogueLines: config.dialogueLines,
-      backgroundImage: staticBgPath,
-      audioFile: staticAudioPath,
-      questionerName: config.questionerName,
-      explainerName: config.explainerName,
-      title: config.title,
-      takeaway: config.takeaway,
-    },
+    inputProps,
   });
 
   // Calculate duration from dialogue
@@ -81,20 +117,15 @@ async function renderVideo(configPath: string) {
     serveUrl: bundleLocation,
     codec: 'h264',
     outputLocation: config.outputPath,
-    inputProps: {
-      dialogueLines: config.dialogueLines,
-      backgroundImage: staticBgPath,
-      audioFile: staticAudioPath,
-      questionerName: config.questionerName,
-      explainerName: config.explainerName,
-      title: config.title,
-      takeaway: config.takeaway,
-    },
+    inputProps,
   });
 
   // Cleanup copied assets
   fs.unlinkSync(bgDest);
   fs.unlinkSync(audioDest);
+  copiedImages.forEach(img => {
+    try { fs.unlinkSync(img); } catch (e) { /* ignore */ }
+  });
 
   console.log('Video rendered successfully:', config.outputPath);
 }

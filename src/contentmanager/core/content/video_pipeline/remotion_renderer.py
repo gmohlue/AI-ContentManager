@@ -50,8 +50,11 @@ class RemotionRenderer:
         # Get audio duration
         total_duration = self._get_audio_duration(voiceover_path)
 
-        # Calculate frame timings from audio duration
-        line_timings = self._calculate_frame_timings(script, total_duration)
+        # Get individual scene durations for accurate sync
+        scene_durations = self._get_scene_durations(voiceover_path.parent, len(script.lines))
+
+        # Calculate frame timings from actual scene audio durations
+        line_timings = self._calculate_frame_timings_from_scenes(script, scene_durations)
 
         # Build Remotion config
         config = self._build_config(
@@ -60,6 +63,7 @@ class RemotionRenderer:
             background_path=background_path,
             output_path=output_path,
             line_timings=line_timings,
+            character_assets=character_assets,
         )
 
         # Write config file (use absolute path)
@@ -109,20 +113,39 @@ class RemotionRenderer:
         )
         return float(result.stdout.strip())
 
-    def _calculate_frame_timings(
-        self, script: DialogueScript, total_duration: float
+    def _get_scene_durations(self, voiceover_dir: Path, num_scenes: int) -> list[float]:
+        """Get actual duration of each scene audio file."""
+        durations = []
+        for i in range(1, num_scenes + 1):
+            scene_file = voiceover_dir / f"scene_{i:03d}.mp3"
+            if scene_file.exists():
+                duration = self._get_audio_duration(scene_file)
+                durations.append(duration)
+                logger.debug(f"Scene {i}: {duration:.2f}s")
+            else:
+                # Fallback: estimate 3 seconds per scene
+                durations.append(3.0)
+                logger.warning(f"Scene file not found: {scene_file}, using 3s estimate")
+        return durations
+
+    def _calculate_frame_timings_from_scenes(
+        self, script: DialogueScript, scene_durations: list[float]
     ) -> list[dict[str, Any]]:
-        """Calculate frame timing for each dialogue line."""
-        total_chars = sum(len(line.line) for line in script.lines)
+        """Calculate frame timing using actual scene audio durations."""
         timings = []
         current_time = 0.0
 
         # Add intro buffer (2 seconds for title)
-        intro_frames = self.fps * 2
+        intro_duration = 2.0
+        intro_frames = int(self.fps * intro_duration)
 
-        for line in script.lines:
-            # Proportional duration based on text length
-            line_duration = (len(line.line) / total_chars) * total_duration
+        for i, line in enumerate(script.lines):
+            # Use actual scene duration if available
+            if i < len(scene_durations):
+                line_duration = scene_durations[i]
+            else:
+                line_duration = 3.0  # Fallback
+
             start_frame = intro_frames + int(current_time * self.fps)
             end_frame = intro_frames + int((current_time + line_duration) * self.fps)
 
@@ -135,6 +158,7 @@ class RemotionRenderer:
             })
 
             current_time += line_duration
+            logger.debug(f"Line {i+1}: frames {start_frame}-{end_frame} ({line_duration:.2f}s)")
 
         return timings
 
@@ -145,6 +169,7 @@ class RemotionRenderer:
         background_path: Path,
         output_path: Path,
         line_timings: list[dict[str, Any]],
+        character_assets: dict[str, dict[str, Path]] | None = None,
     ) -> dict[str, Any]:
         """Build Remotion render configuration."""
         # Get character names from script
@@ -157,7 +182,7 @@ class RemotionRenderer:
             elif line.speaker_role.value == "explainer":
                 explainer_name = line.speaker_name
 
-        return {
+        config = {
             "dialogueLines": line_timings,
             "backgroundImage": str(background_path.absolute()),
             "audioFile": str(voiceover_path.absolute()),
@@ -167,3 +192,22 @@ class RemotionRenderer:
             "takeaway": script.takeaway or "Thanks for watching!",
             "outputPath": str(output_path.absolute()),
         }
+
+        # Add character images if available
+        if character_assets:
+            if "questioner" in character_assets:
+                q_assets = character_assets["questioner"]
+                if "neutral" in q_assets and "talking" in q_assets:
+                    config["questionerImages"] = {
+                        "neutral": str(q_assets["neutral"].absolute()),
+                        "talking": str(q_assets["talking"].absolute()),
+                    }
+            if "explainer" in character_assets:
+                e_assets = character_assets["explainer"]
+                if "neutral" in e_assets and "talking" in e_assets:
+                    config["explainerImages"] = {
+                        "neutral": str(e_assets["neutral"].absolute()),
+                        "talking": str(e_assets["talking"].absolute()),
+                    }
+
+        return config

@@ -1,5 +1,10 @@
 import React from 'react';
-import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { Img, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+
+interface CharacterImages {
+  neutral: string;
+  talking: string;
+}
 
 interface CharacterProps {
   name: string;
@@ -8,6 +13,7 @@ interface CharacterProps {
   isListening: boolean;
   position: 'left' | 'right';
   emotion?: 'neutral' | 'happy' | 'surprised' | 'thinking' | 'excited';
+  images?: CharacterImages;
 }
 
 export const Character: React.FC<CharacterProps> = ({
@@ -17,6 +23,7 @@ export const Character: React.FC<CharacterProps> = ({
   isListening,
   position,
   emotion = 'neutral',
+  images,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -24,14 +31,9 @@ export const Character: React.FC<CharacterProps> = ({
   // Breathing animation (subtle scale)
   const breathe = Math.sin(frame / fps * 1.5) * 0.02 + 1;
 
-  // Speaking animation - more dynamic movement
+  // Speaking animation - bounce when talking
   const speakBounce = isSpeaking
-    ? Math.sin(frame / fps * 12) * 8 + Math.sin(frame / fps * 8) * 4
-    : 0;
-
-  // Mouth animation for speaking
-  const mouthOpen = isSpeaking
-    ? Math.abs(Math.sin(frame / fps * 10)) * 0.8 + 0.2
+    ? Math.sin(frame / fps * 8) * 10
     : 0;
 
   // Head tilt when listening
@@ -39,6 +41,61 @@ export const Character: React.FC<CharacterProps> = ({
     ? Math.sin(frame / fps * 2) * 3
     : isSpeaking ? Math.sin(frame / fps * 4) * 2 : 0;
 
+  // Body lean toward other character when listening
+  const bodyLean = isListening ? (position === 'left' ? 5 : -5) : 0;
+
+  const isLeftPosition = position === 'left';
+
+  // If we have images, render image-based character
+  if (images) {
+    const imageSrc = isSpeaking ? staticFile(images.talking) : staticFile(images.neutral);
+
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          [isLeftPosition ? 'left' : 'right']: 60,
+          bottom: 350,
+          transform: `
+            scale(${breathe})
+            translateY(${speakBounce}px)
+            rotate(${bodyLean + headTilt}deg)
+          `,
+          transformOrigin: 'bottom center',
+        }}
+      >
+        <Img
+          src={imageSrc}
+          style={{
+            width: 350,
+            height: 'auto',
+            filter: 'drop-shadow(0 10px 20px rgba(0,0,0,0.3))',
+          }}
+        />
+        {/* Name label */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: -50,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'white',
+            fontSize: 28,
+            fontWeight: 'bold',
+            textShadow: '2px 2px 8px rgba(0,0,0,0.8)',
+            whiteSpace: 'nowrap',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            padding: '8px 16px',
+            borderRadius: 8,
+          }}
+        >
+          {name}
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback: SVG-based character
   // Eye blink (every ~3 seconds)
   const blinkCycle = (frame % (fps * 3)) / fps;
   const isBlinking = blinkCycle < 0.1;
@@ -48,13 +105,14 @@ export const Character: React.FC<CharacterProps> = ({
                        emotion === 'happy' ? -3 :
                        emotion === 'thinking' ? 5 : 0;
 
-  // Body lean toward other character when listening
-  const bodyLean = isListening ? (position === 'left' ? 5 : -5) : 0;
-
   // Arm gesture when speaking
   const armGesture = isSpeaking ? Math.sin(frame / fps * 6) * 15 : 0;
 
-  const isLeftPosition = position === 'left';
+  // Mouth animation for speaking
+  const mouthOpen = isSpeaking
+    ? Math.abs(Math.sin(frame / fps * 10)) * 0.8 + 0.2
+    : 0;
+
   const facingDirection = isLeftPosition ? 1 : -1;
 
   return (
