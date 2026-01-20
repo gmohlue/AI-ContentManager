@@ -1,0 +1,33 @@
+{
+  "name": "remotion-video",
+  "version": "1.0.0",
+  "description": "Animated educational video generator using Remotion",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "studio": "remotion studio src/index.ts",
+    "render": "ts-node render.ts",
+    "render:test": "ts-node render.ts test-config.json"
+  },
+  "keywords": [
+    "remotion",
+    "video",
+    "animation",
+    "educational"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@remotion/bundler": "^4.0.407",
+    "@remotion/cli": "^4.0.407",
+    "@remotion/media-utils": "^4.0.407",
+    "@remotion/renderer": "^4.0.407",
+    "@types/node": "^22.19.7",
+    "@types/react": "^19.2.9",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "remotion": "^4.0.407",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
